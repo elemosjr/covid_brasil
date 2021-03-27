@@ -1,0 +1,138 @@
+```{r setup, include = FALSE}
+library(ggiraph)
+library(glue)
+library(tidyverse)
+library(lubridate)
+library(tsibble)
+library(fable)
+library(feasts)
+library(ggdark)
+
+download_brasilio_table <- function(dataset, table_name){
+  url <- sprintf("https://data.brasil.io/dataset/%s/%s.csv.gz", dataset, table_name)
+  tmp <- tempfile()
+  download.file(url, tmp)
+  response <- read.csv(gzfile(tmp), encoding = "UTF-8")
+  unlink(tmp)
+  return(response)
+}
+
+seila <- function(x) x - lag(x, default = 0)
+
+seila1 <- function(x)
+{
+  ret_ <- logical()
+  max <- 0
+  for(i in seq_along(x))
+  {
+    if(x[i] >= max) max <- x[i]
+    ret_[i] <- x[i] >= max
+    
+  }
+  ret_
+}
+
+dados <- as_tibble(download_brasilio_table("covid19", "caso")) %>%
+  mutate(date = as.Date(date))
+
+dados_estados <- dados %>% filter(place_type == "state") %>%
+  group_by(date, state) %>%
+  summarize(casos = sum(confirmed),
+            obitos = sum(deaths)) %>%
+  ungroup() %>% group_by(state) %>%
+  summarize(date = date, casos = casos,
+            novos_casos = seila(casos),
+            obitos = obitos,
+            novos_obitos = seila(obitos),
+            filtro = seila1(casos) & seila1(obitos)) %>%
+  filter(filtro)
+
+dados_pais <- dados %>% filter(place_type == "state") %>%
+  group_by(date) %>%
+  summarize(casos = sum(confirmed),
+            obitos = sum(deaths)) %>%
+  summarize(date = date, casos = casos,
+            novos_casos = seila(casos),
+            obitos = obitos,
+            novos_obitos = seila(obitos),
+            filtro = seila1(casos) & seila1(obitos)) %>%
+  filter(filtro)
+
+#dados_estados %>%
+#  ggplot(aes(x = date)) +
+#  geom_line(aes(y = casos), col = 1) +
+#  geom_col(aes(y = novos_casos), col = 2) +
+#  facet_wrap(~ state, scales = "free_y")
+#
+#dados_estados %>%
+#  ggplot(aes(x = date)) +
+#  geom_line(aes(y = obitos), col = 1) +
+#  geom_col(aes(y = novos_obitos), col = 2) +
+#  facet_wrap(~ state, scales = "free_y")
+#
+#dados_pais %>%
+#  ggplot(aes(x = date)) +
+#  geom_line(aes(y = casos))
+#
+#dados %>%
+#  filter(place_type == "state",
+#         date == max(date)) %>%
+#  summarize(sum(confirmed),
+#            sum(deaths))
+```
+
+
+```{r, echo = FALSE, message = FALSE,  warning = FALSE, fig.width = 12, fig.height = 8}
+df_ts <- dados_pais %>%
+  select(-filtro, -novos_obitos, -novos_casos) %>%
+  na.omit() %>%
+  as_tsibble() %>%
+  fill_gaps() %>%
+  gather("tipo", "numero") %>%
+  mutate(tipo = str_to_title(tipo))
+
+modelo <- df_ts %>%
+  model(Arima = ARIMA(numero))
+
+# predicao dos proximos 30 dias
+pred30 <- modelo %>%
+  forecast(h = "30 days")
+
+# grafico dos proximos 30 dias
+plot30 <- pred30 %>%
+  autoplot(df_ts, colour = "red") +
+  facet_grid(tipo ~ .model, scales = "free_y") +
+  guides(fill = FALSE) +
+  scale_y_continuous(n.breaks = 15, labels = scales::comma) +
+  labs(x = "Data", y = "Número de casos",
+       title = "Predição dos casos de coronavírus no Brasil para os próximos trinta dias",
+       subtitle = "Gráfico observando em conjunto os números da predição dos próximos trinta dias e os números de casos anteriores",
+       caption = "Fonte: brasil.io",
+       level = "Confiança", colour = "Modelo", fill = "Modelo") + theme_dark()
+#  dark_theme_minimal(15)
+
+girafe(code = print(plot30), width_svg = 12, height_svg = 8, pointsize = 14) %>%
+  girafe_options(plot30, opts_tooltip(use_fill = TRUE))
+```
+
+```{r, echo = FALSE, message = FALSE,  warning = FALSE, fig.width = 12, fig.height = 8}
+# predicao dos proximos 30 dias
+pred90 <- modelo %>%
+  forecast(h = "90 days")
+
+# grafico dos proximos 30 dias
+plot90 <- pred90 %>%
+  autoplot(df_ts, colour = "red") +
+  facet_grid(tipo ~ .model, scales = "free_y") +
+  guides(fill = FALSE) +
+  scale_y_continuous(n.breaks = 15, labels = scales::comma) +
+  labs(x = "Data", y = "Número de casos",
+       title = "Predição dos casos de coronavírus no Brasil para os próximos noventa dias",
+       subtitle = "Gráfico observando em conjunto os números da predição dos próximos noventa dias e os números de casos anteriores",
+       caption = "Fonte: brasil.io",
+       level = "Confiança", colour = "Modelo", fill = "Modelo") + theme_dark()
+#  dark_theme_minimal(15)
+
+girafe(code = print(plot90), width_svg = 12, height_svg = 8, pointsize = 14) %>%
+  girafe_options(plot90, opts_tooltip(use_fill = TRUE))
+```

@@ -1,0 +1,9 @@
+#!/bin/sh
+
+cd docs
+Rscript -e 'rmarkdown::render("index.Rmd")'
+
+COMMIT=$(date +"%d/%m/%Y")
+git add *
+git commit -m "$COMMIT"
+git push -u origin master
